@@ -10,18 +10,11 @@ import (
 	"strings"
 )
 
-var (
-	netIface  string
-	dir       string
-	localPort int
-	ssl       bool
-)
-
-func getAddrFromIfaceName(iface string) string {
-	var addr string
+func getIPFromIfaceName(iface string) net.IP {
+	var result net.IP
 
 	if iface == "any" {
-		addr = "0.0.0.0"
+		result = net.ParseIP("0.0.0.0")
 	} else {
 		ief, err := net.InterfaceByName(iface)
 		if err != nil {
@@ -35,27 +28,37 @@ func getAddrFromIfaceName(iface string) string {
 			log.Printf("Error retrieving address for %s interface\n", iface)
 			os.Exit(2)
 		}
-		addr = strings.Split(addrs[0].String(), "/")[0]
+		// Retrieving the first IPv4 or IPv6 address
+		for k := range addrs {
+			s := strings.Split(addrs[k].String(), "/")[0]
+			ip := net.ParseIP(s)
+			if ip.To4() != nil { // IPv4 address
+				result = ip
+				break
+			}
+		}
+		if result == nil {
+			log.Printf("Error retrieving a valid IPv4 address for %s interface\n", iface)
+			os.Exit(3)
+		}
 	}
-	return addr
-}
-
-func init() {
-	flag.StringVar(&netIface, "i", "any", "Listen interface")
-	flag.StringVar(&dir, "d", ".", "Directory to expose")
-	flag.IntVar(&localPort, "p", 9090, "Listen port")
-	flag.BoolVar(&ssl, "ssl", false, "SSL support")
-	flag.Parse()
+	return result
 }
 
 func main() {
-	localAddr := getAddrFromIfaceName(netIface)
-	bindValue := fmt.Sprintf("%s:%d", localAddr, localPort)
+	netIface := flag.String("i", "any", "Listen interface")
+	dir := flag.String("d", ".", "Directory to expose")
+	localPort := flag.Int("p", 9090, "Listen port")
+	ssl := flag.Bool("ssl", false, "SSL support")
+	flag.Parse()
+
+	localIP := getIPFromIfaceName(*netIface)
+	bindValue := fmt.Sprintf("%s:%d", localIP.String(), *localPort)
 	log.Printf("Listen to %s\n", bindValue)
 	var err error
 
-	http.Handle("/", http.FileServer(http.Dir(dir)))
-	if ssl {
+	http.Handle("/", http.FileServer(http.Dir(*dir)))
+	if *ssl {
 		err = http.ListenAndServeTLS(bindValue, "server.crt", "server.key", nil)
 	} else {
 		err = http.ListenAndServe(bindValue, nil)
